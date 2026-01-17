@@ -71,7 +71,7 @@
     <script>
         // --- CONFIGURAÇÕES MQTT ---
         const broker = "broker.mqttdashboard.com";
-        const port = 8000; // Porta WebSockets (Diferente da 1883 do ESP32!)
+        const port = 8884; // Porta WebSockets (Diferente da 1883 do ESP32!)
         const clientID = "Prefeitura_Dashboard_" + parseInt(Math.random() * 100);
         
         // Tópicos
@@ -85,8 +85,14 @@
         client.onMessageArrived = onMessageArrived;
 
         // Conectar
-        console.log("Conectando ao Broker...");
-        client.connect({onSuccess:onConnect});
+        // Conectar
+console.log("Conectando ao Broker via SSL...");
+
+// MUDANÇA: Adicione 'useSSL: true' dentro das opções de conexão
+client.connect({
+    onSuccess: onConnect,
+    useSSL: true  // <--- ISSO É OBRIGATÓRIO PARA HTTPS
+});
 
         function onConnect() {
             console.log("Conectado!");
