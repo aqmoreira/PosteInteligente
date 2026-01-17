@@ -1,1 +1,6 @@
 
+Carregue essa versão no ESP32 e não esqueça de conectar:
+Pino 4 - DTH11
+Pino 34 - LDR
+Pino 23 Buzzer
+Pino 15 Fita de Led Ws28b12 ( Estou utilizando apenas 8 para evitar sobrecarga no USB)
