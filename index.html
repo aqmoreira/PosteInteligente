@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Central de Controle - Cidade Inteligente</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+        
+        /* Cabeçalho */
+        header { background-color: #004d40; color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .status-badge { background-color: #e53935; padding: 5px 10px; border-radius: 4px; font-size: 0.9em; }
+        .connected { background-color: #43a047; }
+
+        /* Área de Controle (Propaganda) */
+        .control-panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input[type="text"] { padding: 10px; width: 60%; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 10px 20px; background-color: #004d40; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #00695c; }
+
+        /* Grid dos Postes */
+        #grid-postes { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
+
+        /* Estilo do Card do Poste */
+        .poste-card { background: white; padding: 20px; border-radius: 10px; border-left: 5px solid #9e9e9e; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: transform 0.2s; }
+        .poste-card:hover { transform: translateY(-5px); }
+        .poste-header { font-weight: bold; font-size: 1.2em; color: #333; margin-bottom: 10px; display: flex; justify-content: space-between; }
+        
+        .data-row { display: flex; justify-content: space-between; margin-bottom: 5px; color: #555; }
+        .value { font-weight: bold; color: #000; }
+
+        /* Indicadores Visuais */
+        .icon-luz { font-size: 1.5em; float: right; }
+        .status-dia { border-left-color: #ffca28; } /* Amarelo para Dia */
+        .status-noite { border-left-color: #303f9f; } /* Azul para Noite */
+        .status-eco { border-left-color: #4caf50; } /* Verde para Economia */
+    </style>
+</head>
+<body>
+
+    <header>
+        <div>
+            <h1>Prefeitura Municipal</h1>
+            <small>Sistema de Gestão de Iluminação Pública</small>
+        </div>
+        <div id="connection-status" class="status-badge">Desconectado</div>
+    </header>
+
+    <div class="control-panel">
+        <h3>Central de Propaganda e Alertas</h3>
+        <p>Enviar mensagem para o display dos postes:</p>
+        <select id="alvo-msg">
+            <option value="todos">Todos os Postes (Broadcast)</option>
+            
+        </select>
+        <input type="text" id="msg-input" placeholder="Digite a mensagem (Ex: Vacinação contra Gripe hoje!)">
+        <button onclick="enviarMensagem()">Enviar Mensagem</button>
+        <div style="margin-top: 20px; padding-top: 10px; border-top: 1px solid #eee;">
+    <h4>📜 Histórico de Envios</h4>
+    <div id="log-box" style="height: 150px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 0.9em;">
+        <div style="color: #888;">Sistema iniciado...</div>
+    </div>
+</div>
+    </div>
+    
+
+    <div id="grid-postes">
+        </div>
+
+    <script>
+        // --- CONFIGURAÇÕES MQTT ---
+        const broker = "broker.mqttdashboard.com";
+        const port = 8000; // Porta WebSockets (Diferente da 1883 do ESP32!)
+        const clientID = "Prefeitura_Dashboard_" + parseInt(Math.random() * 100);
+        
+        // Tópicos
+        const topicoSensores = "cidade/bairro/+/sensores"; // O "+" é o curinga para ouvir TODOS os postes
+        
+        // Criando Cliente
+        client = new Paho.MQTT.Client(broker, port, clientID);
+
+        // Callbacks
+        client.onConnectionLost = onConnectionLost;
+        client.onMessageArrived = onMessageArrived;
+
+        // Conectar
+        console.log("Conectando ao Broker...");
+        client.connect({onSuccess:onConnect});
+
+        function onConnect() {
+            console.log("Conectado!");
+            document.getElementById("connection-status").innerText = "Sistema Online";
+            document.getElementById("connection-status").classList.add("connected");
+            
+            // Se inscreve para ouvir todos os postes
+            client.subscribe(topicoSensores);
+        }
+
+        function onConnectionLost(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                console.log("Conexão perdida: " + responseObject.errorMessage);
+                document.getElementById("connection-status").innerText = "Desconectado";
+                document.getElementById("connection-status").classList.remove("connected");
+            }
+        }
+
+        // --- QUANDO UMA MENSAGEM CHEGA ---
+        function onMessageArrived(message) {
+            console.log("Dados recebidos: " + message.payloadString);
+            
+            try {
+                // Converte o texto JSON recebido para Objeto Javascript
+                const dados = JSON.parse(message.payloadString);
+                atualizarCard(dados);
+            } catch (e) {
+                console.error("Erro ao ler JSON: ", e);
+            }
+        }
+	function adicionarLog(alvo, texto) {
+	    const logBox = document.getElementById("log-box");
+	    const hora = new Date().toLocaleTimeString();
+	    
+	    // Cria a linha do log
+	    const linha = document.createElement("div");
+	    linha.innerHTML = `<strong>[${hora}]</strong> Para <em>${alvo}</em>: ${texto}`;
+	    linha.style.borderBottom = "1px solid #eee";
+	    linha.style.padding = "2px 0";
+	    
+	    // Adiciona no topo
+	    logBox.insertBefore(linha, logBox.firstChild);
+	}
+
+        // --- LÓGICA DE CRIAÇÃO/ATUALIZAÇÃO DE CARDS ---
+        // --- LÓGICA DE CRIAÇÃO/ATUALIZAÇÃO DE CARDS ---
+        function atualizarCard(dados) {
+            const idPoste = dados.id; 
+            let card = document.getElementById(idPoste);
+
+            // 1. Definição do Ícone e Status (Dia/Noite)
+            let classeStatus = "status-dia";
+            let icone = "☀️";
+            if(dados.luz > 2000) { 
+                classeStatus = "status-noite";
+                icone = "🌙";
+            }
+
+            // 2. Definição da Cor do Modo (Gestão)
+            let corModo = "gray";
+            if(dados.modo === "AUTO") corModo = "blue";
+            if(dados.modo === "MANUAL_ON") corModo = "red";
+            if(dados.modo === "ECO_MAX") corModo = "green";
+
+            // 3. TRATAMENTO DE ERRO DO SENSOR (AQUI ESTÁ A MUDANÇA)
+            let displayTemp;
+            // O sensor DHT retorna -99 quando falha ou não existe (conforme seu código C++)
+            if (dados.temp == -99) {
+                // Mostra um aviso visual vermelho
+                displayTemp = '<span style="color:red; font-size:0.9em">⚠️ Sem Sensor</span>';
+            } else {
+                // Mostra a temperatura normal formatada
+                displayTemp = dados.temp.toFixed(1) + "°C";
+            }
+
+            // 4. Montagem do HTML
+            const htmlConteudo = `
+                <div class="poste-header">
+                    ${idPoste.toUpperCase()} <span class="icon-luz">${icone}</span>
+                </div>
+                
+                <div class="data-row">
+                    <span>🌡️ Temp:</span> <span class="value">${displayTemp}</span>
+                </div>
+                <div class="data-row">
+                    <span>💡 Luz:</span> <span class="value">${dados.luz}</span>
+                </div>
+                
+                <div style="background: #e3f2fd; padding: 5px; border-radius: 5px; margin: 10px 0;">
+                    <div class="data-row">
+                        <span>⚡ Consumo:</span> 
+                        <span class="value" style="color:#d32f2f">${dados.watts} W</span>
+                    </div>
+                    <div class="data-row">
+                        <span>⚙️ Modo:</span> 
+                        <span class="value" style="color:${corModo}">${dados.modo}</span>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 10px;">
+                    <button onclick="enviarComando('${idPoste}', 'AUTO')" style="font-size:0.8em; background:#2196F3;">AUTO</button>
+                    <button onclick="enviarComando('${idPoste}', 'ECO')" style="font-size:0.8em; background:#4CAF50;">ECO</button>
+                    <button onclick="enviarComando('${idPoste}', 'LIGAR')" style="font-size:0.8em; background:#FF9800;">ON</button>
+                    <button onclick="enviarComando('${idPoste}', 'DESLIGAR')" style="font-size:0.8em; background:#607D8B;">OFF</button>
+                </div>
+                
+                <div class="data-row" style="margin-top:5px">
+                    <small>Última msg: ${new Date().toLocaleTimeString()}</small>
+                </div>
+            `;
+
+            // Injeção no DOM (Cria ou Atualiza)
+            if (card) {
+                card.innerHTML = htmlConteudo;
+                card.className = `poste-card ${classeStatus}`;
+            } else {
+                const novoCard = document.createElement("div");
+                novoCard.id = idPoste;
+                novoCard.className = `poste-card ${classeStatus}`;
+                novoCard.innerHTML = htmlConteudo;
+                document.getElementById("grid-postes").appendChild(novoCard);
+
+                // Adiciona na lista de envio de mensagem
+                const option = document.createElement("option");
+                option.text = "Apenas " + idPoste;
+                option.value = idPoste;
+                document.getElementById("alvo-msg").appendChild(option);
+            }
+        }
+        // --- ENVIAR PROPAGANDA ---
+        function enviarMensagem() {
+            const texto = document.getElementById("msg-input").value;
+            const alvo = document.getElementById("alvo-msg").value;
+            let topicoDestino = "";
+
+            if(alvo === "todos") {
+                // Lógica para enviar para todos (no ESP32 precisaria tratar wildcard ou topico geral)
+                // Para simplificar, mandamos para o poste_01 como exemplo
+                topicoDestino = "cidade/geral/alerta"; 
+            } else {
+                topicoDestino = `cidade/bairro/${alvo}/propaganda`;
+            }
+
+            if(texto) {
+                message = new Paho.MQTT.Message(texto);
+                message.destinationName = topicoDestino;
+                client.send(message);
+                adicionarLog(alvo, texto);
+                console.info(`Mensagem enviada para: ${topicoDestino}`);
+            }
+        }
+        function enviarComando(idPoste, comando) {
+    // Envia para o mesmo tópico que o poste escuta : cidade/bairro/{id}/comando
+    
+      const topico = `cidade/bairro/${idPoste}/comando`; 
+    
+    
+    message = new Paho.MQTT.Message(comando);
+    message.destinationName = topico;
+    client.send(message);
+    console.log(`Comando ${comando} enviado para ${idPoste}`);
+}
+    </script>
+</body>
+</html>
